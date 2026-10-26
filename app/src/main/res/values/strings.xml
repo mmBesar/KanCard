@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Every piece of text the app shows. To add a language, copy this file to values-xx/strings.xml and translate. -->
+<resources>
+    <string name="app_name">KanCard</string>
+
+    <!-- General buttons -->
+    <string name="action_cancel">Cancel</string>
+    <string name="action_ok">OK</string>
+    <string name="action_save">Save</string>
+    <string name="action_create">Create</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_back">Back</string>
+    <string name="action_pick_date">Pick date</string>
+    <string name="action_connect">Test and connect</string>
+    <string name="action_use_locally">Use locally instead</string>
+
+    <!-- First-start screen -->
+    <string name="setup_title">KanCard</string>
+    <string name="setup_intro">Your Kanboard server, in your hand. http:// and self-signed https:// both work.</string>
+    <string name="setup_local_intro">KanCard also works on this phone only, with nothing sent anywhere.</string>
+    <string name="setup_http_notice">This address is not encrypted. Anyone on the network could read your password and tasks.</string>
+    <string name="field_address">Server address</string>
+    <string name="field_address_hint">https://kanboard.example.com</string>
+    <string name="field_username">Username</string>
+    <string name="field_token">Password</string>
+
+    <!-- Plain HTTP warning -->
+    <string name="http_title">Connection is not encrypted</string>
+    <string name="http_message">You are about to connect with plain http://. Your username, password and all task data travel unprotected. This is acceptable on a trusted home network, but not over the internet or public Wi-Fi.</string>
+    <string name="http_continue">Connect anyway</string>
+
+    <!-- Self-signed certificate dialog -->
+    <string name="cert_title">Trust this certificate?</string>
+    <string name="cert_intro">The server uses a certificate that Android does not recognise. If you trust it, KanCard will only ever connect to a server presenting exactly this certificate.</string>
+    <string name="cert_self_signed">This certificate is self-signed.</string>
+    <string name="cert_subject">Issued to: %s</string>
+    <string name="cert_issuer">Issued by: %s</string>
+    <string name="cert_valid">Valid from %1$s to %2$s</string>
+    <string name="cert_fingerprint">SHA-256 fingerprint</string>
+    <string name="cert_advice">Compare this fingerprint with the one shown by your server (for example with: openssl x509 -noout -fingerprint -sha256). Only continue if they match.</string>
+    <string name="cert_trust">Trust this certificate</string>
+
+    <!-- Board screen -->
+    <string name="menu_projects">Projects</string>
+    <string name="menu_more">More</string>
+    <string name="menu_closed_tasks">Closed tasks</string>
+    <string name="menu_export_backup">Export backup</string>
+    <string name="menu_export_snapshot">Export snapshot</string>
+    <string name="menu_import_backup">Import backup</string>
+    <string name="menu_archive_project">Archive project</string>
+    <string name="menu_connection">Connection and about</string>
+    <string name="menu_switch_mode">Switch mode</string>
+    <string name="board_no_projects">There is no project yet.</string>
+    <string name="board_no_columns">This project has no columns.</string>
+    <string name="board_empty_column">No tasks in this column.</string>
+    <string name="project_new">New project</string>
+    <string name="field_project_name">Project name</string>
+    <string name="starter_project_name">My project</string>
+
+    <!-- Tasks -->
+    <string name="task_new">New task</string>
+    <string name="task_edit">Edit task</string>
+    <string name="task_close">Close task</string>
+    <string name="task_move_left">Move to previous column</string>
+    <string name="task_move_right">Move to next column</string>
+    <string name="task_move_up">Move up</string>
+    <string name="task_move_down">Move down</string>
+    <string name="field_title">Title</string>
+    <string name="field_description">Description (Markdown)</string>
+    <string name="action_preview">Preview</string>
+    <string name="action_edit_text">Edit text</string>
+    <string name="preview_empty">Nothing to preview yet.</string>
+    <string name="due_on">Due: %s</string>
+    <string name="no_due_date">No due date</string>
+
+    <!-- Closed tasks -->
+    <string name="closed_empty">No closed tasks.</string>
+    <string name="closed_reopen">Reopen</string>
+    <string name="closed_delete">Delete</string>
+    <string name="closed_delete_title">Delete task?</string>
+    <string name="closed_delete_message">\"%s\" will be deleted permanently.</string>
+
+    <!-- Archive / switch / import confirmations -->
+    <string name="archive_title">Archive this project?</string>
+    <string name="archive_message_local">The project is hidden. Its tasks stay in the local database and in backups.</string>
+    <string name="archive_message_server">The project is disabled on the Kanboard server. Nothing is deleted.</string>
+    <string name="switch_title">Switch mode?</string>
+    <string name="switch_message_local">All local projects and tasks on this phone will be erased. Export a backup first if you want to keep them.</string>
+    <string name="switch_message_server">The saved login and the cached data on this phone will be erased. Nothing changes on the server.</string>
+    <string name="switch_confirm">Erase and switch</string>
+    <string name="import_title">Import backup?</string>
+    <string name="import_message">This replaces ALL local projects and tasks with the content of the file.</string>
+    <string name="import_confirm">Replace everything</string>
+    <string name="message_exported">File saved.</string>
+    <string name="message_imported">Backup restored.</string>
+
+    <!-- Connection / about dialog -->
+    <string name="about_title">Connection and about</string>
+    <string name="about_local">Local-only mode: everything stays on this phone.</string>
+    <string name="about_server">Server: %s</string>
+    <string name="about_user">User: %s</string>
+    <string name="about_security_https">Encrypted with a certificate Android trusts.</string>
+    <string name="about_security_pinned">Encrypted. Only this self-signed certificate is trusted:</string>
+    <string name="about_security_http">Not encrypted (http://). Use only on a network you trust.</string>
+    <string name="about_independent">KanCard is an independent open-source app. It is not affiliated with or endorsed by the Kanboard project.</string>
+
+    <!-- Errors and messages -->
+    <string name="error_bad_address">That does not look like a valid server address.</string>
+    <string name="error_missing_login">Enter your username and password.</string>
+    <string name="error_network">Cannot reach the server. Check the address and your connection. Saved data is still shown.</string>
+    <string name="error_certificate">The server certificate is not trusted.</string>
+    <string name="error_certificate_changed">The server certificate is not the one you trusted. If it was renewed on purpose, open Settings, then Edit server address or user, and connect again to trust the new one.</string>
+    <string name="error_unauthorized">Login refused. Check your username and password.</string>
+    <string name="error_forbidden">This account is not allowed to do that.</string>
+    <string name="error_rejected">The server refused the change.</string>
+    <string name="error_server">The server reported a problem: %s</string>
+    <string name="error_bad_response">The server did not answer like Kanboard. Check the address.</string>
+    <string name="error_not_configured">No server is set up.</string>
+    <string name="error_unexpected">Something went wrong.</string>
+    <string name="error_file_write">Could not write the file.</string>
+    <string name="error_file_read">Could not read the file.</string>
+    <string name="error_file_too_big">That file is too large to be a KanCard backup.</string>
+
+    <!-- Home-screen widget -->
+    <string name="widget_label">KanCard board</string>
+    <string name="widget_description">Shows the open tasks of one project.</string>
+    <string name="widget_not_configured">Open KanCard and set up a project first.</string>
+    <string name="widget_config_title">Choose a project</string>
+    <string name="widget_config_no_setup">Open KanCard first and connect to a server or choose local mode.</string>
+    <string name="widget_config_no_projects">There are no projects yet.</string>
+
+    <!-- Appearance settings -->
+    <string name="menu_settings">Settings</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_theme">Theme</string>
+    <string name="theme_auto">Automatic</string>
+    <string name="theme_auto_desc">Latte in light mode, Macchiato in dark mode</string>
+    <string name="theme_latte">Catppuccin Latte</string>
+    <string name="theme_latte_desc">Light</string>
+    <string name="theme_frappe">Catppuccin Frappé</string>
+    <string name="theme_frappe_desc">Dark, soft</string>
+    <string name="theme_macchiato">Catppuccin Macchiato</string>
+    <string name="theme_macchiato_desc">Dark, medium</string>
+    <string name="theme_mocha">Catppuccin Mocha</string>
+    <string name="theme_mocha_desc">Dark, deepest</string>
+    <string name="theme_system">System colours</string>
+    <string name="theme_system_desc">Uses your phone\'s wallpaper colours (Android 12 or newer)</string>
+    <string name="settings_accent">Accent colour</string>
+    <string name="settings_accent_desc">Works with every theme. Pick a Catppuccin accent or make your own.</string>
+    <string name="accent_default">Default</string>
+    <string name="accent_custom">Custom colour</string>
+    <string name="settings_amoled">Pure black (AMOLED)</string>
+    <string name="settings_amoled_desc">Black backgrounds in dark mode, saves battery on OLED screens</string>
+    <string name="custom_title">Custom accent</string>
+    <string name="custom_hue">Hue</string>
+    <string name="custom_saturation">Saturation</string>
+    <string name="custom_brightness">Brightness</string>
+    <string name="custom_hex">Hex colour</string>
+
+    <!-- Task colour and priority -->
+    <string name="field_color">Colour</string>
+    <string name="color_default">No colour</string>
+    <string name="field_priority">Priority</string>
+    <string name="priority_none">None</string>
+    <string name="priority_low">Low</string>
+    <string name="priority_medium">Medium</string>
+    <string name="priority_high">High</string>
+    <string name="task_waiting">⟳ waiting to sync</string>
+
+    <!-- Offline sync -->
+    <string name="menu_sync_now">Sync now</string>
+    <string name="banner_offline">Offline. Your changes are saved on this phone.</string>
+    <string name="banner_offline_pending">Offline. %d change(s) will be sent when you are back online.</string>
+    <string name="banner_pending">%d change(s) waiting to be sent to the server.</string>
+    <string name="banner_login">The server did not accept your password. Changes are kept safe.</string>
+    <string name="banner_certificate">The server certificate changed. Changes are kept safe.</string>
+    <string name="banner_error">The server reported a problem. KanCard will try again.</string>
+    <string name="action_update_token">Change</string>
+    <string name="action_review">Review</string>
+    <string name="sync_dropped">%d change(s) were refused by the server and undone.</string>
+    <string name="switch_pending_warning">Warning: %d change(s) have not reached the server yet and will be lost.</string>
+    <string name="cert_changed_warning">This server\'s certificate is different from the one you trusted before. Only continue if you know why.</string>
+    <string name="token_title">Change password</string>
+    <string name="token_message">Enter your new Kanboard password.</string>
+
+    <!-- Search -->
+    <string name="search_hint">Search tasks</string>
+    <string name="search_close">Close search</string>
+
+    <!-- Settings: account, sync, about -->
+    <string name="settings_account">Account</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_about">About</string>
+    <string name="settings_change_secret">Change password</string>
+    <string name="settings_edit_connection">Edit server address or user</string>
+    <string name="settings_sync_now">Sync now</string>
+    <string name="settings_log_out">Log out</string>
+    <string name="settings_use_server">Use a Kanboard server instead</string>
+    <string name="logout_title">Log out?</string>
+    <string name="logout_confirm">Erase and log out</string>
+    <string name="settings_show_descriptions">Show descriptions on cards</string>
+    <string name="settings_show_descriptions_desc">Turn off for shorter, more compact cards</string>
+    <string name="about_version">KanCard %s</string>
+    <string name="about_license">Free software under the GNU GPL v3. Source: github.com/mmBesar/KanCard</string>
+    <string name="setup_edit_title">Edit connection</string>
+    <string name="setup_edit_warning">Saving connects again and replaces the copy of your boards on this phone. Changes that have not reached the server yet will be lost.</string>
+
+    <!-- Task details, subtasks, comments -->
+    <string name="task_details">Details</string>
+    <string name="details_subtasks">Subtasks</string>
+    <string name="details_comments">Comments</string>
+    <string name="details_no_subtasks">No subtasks yet.</string>
+    <string name="details_no_comments">No comments yet.</string>
+    <string name="details_delete">Delete</string>
+    <string name="details_not_synced">This task has not reached the server yet. Wait until it has synced, then try again.</string>
+    <string name="subtask_hint">New subtask</string>
+    <string name="comment_hint">Write a comment (Markdown works)</string>
+    <string name="comment_author_me">Me</string>
+    <string name="action_add">Add</string>
+    <string name="action_send">Send</string>
+
+    <!-- Login help -->
+    <string name="setup_login_help">Use the username and password you sign in to Kanboard with.</string>
+    <!-- 0.5.0: Today, project views -->
+    <string name="tab_today">Today</string>
+    <string name="tab_projects">Projects</string>
+    <string name="today_overdue">Overdue</string>
+    <string name="today_today">Due today</string>
+    <string name="today_soon">Next 7 days</string>
+    <string name="today_important">High priority</string>
+    <string name="today_empty">Nothing needs you right now.</string>
+    <string name="view_board">Board</string>
+    <string name="view_list">List</string>
+    <string name="view_make_default">Make %1$s the default view of this project</string>
+    <string name="view_default_saved">%1$s is now the default view of this project</string>
+    <string name="settings_projects">Projects</string>
+    <string name="settings_remember_view">Remember the last view</string>
+    <string name="settings_remember_view_desc">Each project opens the way you left it. When off, a project opens in its own default view.</string>
+    <string name="quick_add_hint">Add a task</string>
+    <string name="setup_section_server">Server</string>
+    <string name="setup_section_account">Account</string>
+    <string name="setup_show">Show</string>
+    <string name="setup_hide">Hide</string>
+    <string name="setup_local_title">No server?</string>
+</resources>

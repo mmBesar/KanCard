@@ -1,0 +1,19 @@
+# Gradle / Android build output
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+
+# Signing material must NEVER be committed
+*.jks
+*.keystore
+keystore.properties
+
+# Helper scripts and notes that only belong on the maintainer's machine
+MAINTAINER-LOCAL/

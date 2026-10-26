@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Lets Android use plain HTTP at all. The app decides per server whether it is
+    actually used (see network/HttpClients.kt), so this is not a free-for-all.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Catppuccin Latte "base" -->
+    <color name="window_background">#EFF1F5</color>
+    <!-- Launcher icon colours (Catppuccin Mauve on Base) -->
+    <color name="ic_launcher_background">#8839EF</color>
+</resources>

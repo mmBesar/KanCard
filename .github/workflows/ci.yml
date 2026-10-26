@@ -1,0 +1,40 @@
+# CI: on every push to main and every pull request, run the unit tests,
+# Android lint, and build a debug APK you can download and test.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      # Get the code.
+      - uses: actions/checkout@v6
+
+      # JDK 17 is what the project builds with.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # Unit tests (includes the self-signed / http / pinning tests) + lint + debug APK.
+      - name: Test, lint and build
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+
+      # Keep the test report when something fails, to see why.
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-report
+          path: app/build/reports/
+
+      # The debug APK, ready to install for testing (not for release).
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: KanCard-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
