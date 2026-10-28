@@ -212,11 +212,11 @@
     <string name="details_no_subtasks">No subtasks yet.</string>
     <string name="details_no_comments">No comments yet.</string>
     <string name="details_delete">Delete</string>
-    <string name="details_not_synced">This task has not reached the server yet. Wait until it has synced, then try again.</string>
     <string name="subtask_hint">New subtask</string>
     <string name="comment_hint">Write a comment (Markdown works)</string>
     <string name="comment_author_me">Me</string>
     <string name="action_add">Add</string>
+    <string name="action_done">Done</string>
     <string name="action_send">Send</string>
 
     <!-- Login help -->
@@ -242,4 +242,8 @@
     <string name="setup_show">Show</string>
     <string name="setup_hide">Hide</string>
     <string name="setup_local_title">No server?</string>
+    <string name="today_by_time">By time</string>
+    <string name="today_by_project">By project</string>
+    <string name="details_mark_done">Mark done</string>
+    <string name="details_move_to">Move to</string>
 </resources>

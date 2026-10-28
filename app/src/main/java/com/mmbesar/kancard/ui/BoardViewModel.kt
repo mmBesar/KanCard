@@ -28,6 +28,7 @@ import com.mmbesar.kancard.security.Connection
 import com.mmbesar.kancard.security.Mode
 import com.mmbesar.kancard.widget.BoardWidget
 import com.mmbesar.kancard.widget.RefreshWorker
+import com.mmbesar.kancard.widget.WidgetPrefs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -102,7 +103,11 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     /** The project on screen: the chosen one, or the first one if the choice is gone. */
     val currentProject: StateFlow<ProjectEntity?> =
         combine(projects, _selectedProjectId) { list, id ->
-            list.firstOrNull { it.id == id } ?: list.firstOrNull()
+            // The saved choice is the second try: a project made offline changes its id when the
+            // server creates it, and the saved choice is already the new one at that moment.
+            list.firstOrNull { it.id == id }
+                ?: list.firstOrNull { it.id == store.selectedProjectId }
+                ?: list.firstOrNull()
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -200,6 +205,16 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
             )
         } catch (e: Exception) {
             // No connectivity service: the sync still runs on every change and on pull-to-refresh.
+        }
+        // A project made offline got its real id from the server: keep showing it.
+        viewModelScope.launch {
+            repo.projectRemapped.collect { (oldId, newId) ->
+                if (_selectedProjectId.value == oldId) _selectedProjectId.value = newId
+                // Widgets and the remembered view of that project follow it to its new id.
+                WidgetPrefs.remapProject(getApplication<Application>(), oldId, newId)
+                container.viewPrefs.moveDefault(oldId, newId)
+                updateWidgets()
+            }
         }
         // Whenever another project comes on screen, bring its content up to date.
         viewModelScope.launch {
@@ -367,7 +382,10 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     fun moveTask(task: TaskEntity, columnId: Long, beforeTaskId: Long?) =
         localOp { repo.moveTask(task, columnId, beforeTaskId) }
 
-    // ---- Subtasks and comments (need the server in server mode; the cached copy can be read offline) ----
+    // ---- Subtasks and comments (saved on the phone, sent to the server in the background) ----
+
+    /** The columns of any project (the details sheet offers them for moving a task). */
+    fun columnsFor(projectId: Long): Flow<List<ColumnEntity>> = repo.observeColumns(projectId)
 
     fun subtasks(taskId: Long): Flow<List<SubtaskEntity>> = repo.observeSubtasks(taskId)
 
@@ -401,13 +419,8 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteComment(task: TaskEntity, comment: CommentEntity) =
         detailOp(task) { repo.deleteComment(comment) }
 
-    private fun detailOp(task: TaskEntity, block: suspend () -> Unit) {
-        if (repo.mode == Mode.KANBOARD && task.id <= 0L) {
-            _events.tryEmit(str(R.string.details_not_synced))
-            return
-        }
-        onlineOp(block)
-    }
+    /** Subtasks and comments are saved on the phone at once and sent later, like everything else. */
+    private fun detailOp(@Suppress("UNUSED_PARAMETER") task: TaskEntity, block: suspend () -> Unit) = localOp(block)
 
     /** One-line "add a task" under a column: just a title, everything else default. */
     fun quickAdd(columnId: Long, title: String) = createTask(columnId, title, "", null, "", 0)
@@ -418,15 +431,16 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteTask(task: TaskEntity) = localOp { repo.deleteTask(task) }
 
-    // Projects need the server, so they run as "online" actions.
+    // Projects too: made and archived on the phone first, the server hears about it when it can.
 
-    fun createProject(name: String) = onlineOp {
-        val id = repo.createProject(name)
-        selectProject(id)
+    fun createProject(name: String) = localOp {
+        repo.createProject(name)
+        // The repository chose the new project (and keeps that choice right if the id changes later).
+        _selectedProjectId.value = store.selectedProjectId
     }
 
-    fun archiveCurrentProject() = onlineOp {
-        val project = currentProject.value ?: return@onlineOp
+    fun archiveCurrentProject() = localOp {
+        val project = currentProject.value ?: return@localOp
         repo.archiveProject(project.id)
         selectProject(0L)
     }
@@ -507,7 +521,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
 
                     if (showProblems) _refreshing.value = true
                     val ids = if (downloadAll) null else listOfNotNull(currentProject.value?.id)
-                    val result = repo.sync(ids)
+                    val result = repo.sync(ids, force = showProblems)
                     _refreshing.value = false
 
                     report(result, showProblems)

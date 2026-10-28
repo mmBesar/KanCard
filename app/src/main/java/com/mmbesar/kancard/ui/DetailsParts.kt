@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
@@ -63,15 +64,7 @@ fun SubtasksSection(viewModel: BoardViewModel, task: TaskEntity, showTitle: Bool
                     .clickable { viewModel.toggleSubtask(task, sub) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    when (sub.status) {
-                        2 -> "☑"
-                        1 -> "◐"
-                        else -> "☐"
-                    },
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(end = 10.dp),
-                )
+                Checkbox(checked = sub.status == 2, onCheckedChange = { viewModel.toggleSubtask(task, sub) })
                 Text(
                     sub.title,
                     style = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
@@ -156,5 +149,36 @@ fun CommentsSection(viewModel: BoardViewModel, task: TaskEntity) {
             enabled = newComment.isNotBlank() && !busy,
             modifier = Modifier.align(Alignment.End),
         ) { Text(stringResource(R.string.action_send)) }
+    }
+}
+
+/**
+ * The subtasks of one task as compact rows with a tick box, shown right under the task
+ * (nothing is drawn when the task has none). Tap the box or the title to tick.
+ */
+@Composable
+fun SubtasksInline(viewModel: BoardViewModel, task: TaskEntity, modifier: Modifier = Modifier) {
+    val subtasks by remember(task.id) { viewModel.subtasks(task.id) }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    if (subtasks.isEmpty()) return
+    Column(modifier = modifier.fillMaxWidth()) {
+        subtasks.forEach { sub ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { viewModel.toggleSubtask(task, sub) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(checked = sub.status == 2, onCheckedChange = { viewModel.toggleSubtask(task, sub) })
+                Text(
+                    sub.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(textDirection = TextDirection.Content),
+                    textDecoration = if (sub.status == 2) TextDecoration.LineThrough else null,
+                    color = if (sub.status == 2) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
     }
 }

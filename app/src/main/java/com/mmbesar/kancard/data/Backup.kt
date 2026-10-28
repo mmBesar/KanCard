@@ -8,7 +8,7 @@ import kotlinx.serialization.json.Json
 /**
  * The portable backup file: plain UTF-8 JSON, easy to read and keep.
  *
- * It holds project, column and task CONTENT only. It never contains the server
+ * It holds project, column, task, subtask and comment CONTENT only. It never contains the server
  * address, username, token, certificate pin or widget settings.
  */
 @Serializable
@@ -21,7 +21,7 @@ data class BackupFile(
 ) {
     companion object {
         const val FORMAT = "kancard-backup"
-        const val VERSION = 1
+        const val VERSION = 2
     }
 }
 
@@ -50,6 +50,23 @@ data class BackupTask(
     val color: String = "",
     /** 0 (none) to 3 (high). */
     val priority: Int = 0,
+    val subtasks: List<BackupSubtask> = emptyList(),
+    val comments: List<BackupComment> = emptyList(),
+)
+
+@Serializable
+data class BackupSubtask(
+    val title: String,
+    /** 0 = to do, 1 = in progress, 2 = done. */
+    val status: Int = 0,
+)
+
+@Serializable
+data class BackupComment(
+    val author: String = "",
+    val content: String,
+    /** Epoch seconds. */
+    val created: Long = 0,
 )
 
 /** Reads and writes backup files, and refuses files that look wrong. */
@@ -59,6 +76,7 @@ object BackupCodec {
     private const val MAX_PROJECTS = 1_000
     private const val MAX_COLUMNS_PER_PROJECT = 100
     private const val MAX_TASKS_TOTAL = 200_000
+    private const val MAX_NOTES_PER_TASK = 2_000
 
     private val json = Json {
         prettyPrint = true
@@ -87,6 +105,9 @@ object BackupCodec {
                 tasks += column.tasks.size
                 for (task in column.tasks) {
                     require(task.title.isNotBlank()) { "A task in the backup has no title" }
+                    require(task.subtasks.size <= MAX_NOTES_PER_TASK && task.comments.size <= MAX_NOTES_PER_TASK) {
+                        "A task has too many subtasks or comments"
+                    }
                     require(task.dueDate == null || DueDates.toPickerMillis(task.dueDate) != null) {
                         "A task in the backup has an invalid date"
                     }

@@ -192,6 +192,150 @@ abstract class BoardDao {
     @Query("UPDATE tasks SET id = :newId WHERE id = :oldId")
     abstract suspend fun retargetTask(oldId: Long, newId: Long)
 
+    @Query("SELECT COUNT(*) FROM pending_ops WHERE type = :type AND targetId = :targetId AND id != :exceptId")
+    abstract suspend fun countOpsFor(type: String, targetId: Long, exceptId: Long): Int
+
+    @Query("DELETE FROM pending_ops WHERE targetId = :targetId AND type IN (:types)")
+    abstract suspend fun deleteOpsOfTarget(targetId: Long, types: List<String>)
+
+    @Query("DELETE FROM pending_ops WHERE projectId = :projectId")
+    abstract suspend fun deleteOpsOfProject(projectId: Long)
+
+    @Query("UPDATE pending_ops SET targetId = :newId WHERE targetId = :oldId AND type IN (:types)")
+    abstract suspend fun retargetOpsOfTarget(oldId: Long, newId: Long, types: List<String>)
+
+    @Query("UPDATE pending_ops SET projectId = :newId WHERE projectId = :oldId")
+    abstract suspend fun retargetOpsProject(oldId: Long, newId: Long)
+
+    // ---- Subtask / comment / project helpers for the offline queue ----
+
+    @Query("SELECT COUNT(*) FROM pending_ops WHERE taskId = :taskId")
+    abstract suspend fun countOpsOfTask(taskId: Long): Int
+
+    @Query("UPDATE projects SET name = :name WHERE id = :id")
+    abstract suspend fun renameProject(id: Long, name: String)
+
+    @Query("SELECT * FROM subtasks WHERE id = :id")
+    abstract suspend fun subtask(id: Long): SubtaskEntity?
+
+    @Query("SELECT * FROM comments WHERE id = :id")
+    abstract suspend fun comment(id: Long): CommentEntity?
+
+    @Query("SELECT id FROM subtasks WHERE taskId = :taskId")
+    abstract suspend fun subtaskIdsOf(taskId: Long): List<Long>
+
+    @Query("SELECT id FROM comments WHERE taskId = :taskId")
+    abstract suspend fun commentIdsOf(taskId: Long): List<Long>
+
+    @Query("SELECT MIN(id) FROM subtasks")
+    abstract suspend fun minSubtaskId(): Long?
+
+    @Query("SELECT MIN(id) FROM comments")
+    abstract suspend fun minCommentId(): Long?
+
+    @Query("SELECT MIN(id) FROM projects")
+    abstract suspend fun minProjectId(): Long?
+
+    @Query("SELECT MIN(id) FROM board_columns")
+    abstract suspend fun minColumnId(): Long?
+
+    @Query("SELECT COALESCE(MAX(position), 0) + 1 FROM subtasks WHERE taskId = :taskId")
+    abstract suspend fun nextSubtaskPosition(taskId: Long): Int
+
+    @Query("SELECT projectId FROM tasks WHERE id = :taskId")
+    abstract suspend fun projectOfTask(taskId: Long): Long?
+
+    /** Server ids of the open tasks of a project (the ones whose subtasks and comments are kept offline). */
+    @Query("SELECT id FROM tasks WHERE projectId = :projectId AND isActive = 1 AND id > 0 ORDER BY id DESC")
+    abstract suspend fun syncedOpenTaskIds(projectId: Long): List<Long>
+
+    @Query("SELECT s.* FROM subtasks s INNER JOIN tasks t ON s.taskId = t.id WHERE t.projectId = :projectId")
+    abstract suspend fun subtasksOfProject(projectId: Long): List<SubtaskEntity>
+
+    @Query("SELECT c.* FROM comments c INNER JOIN tasks t ON c.taskId = t.id WHERE t.projectId = :projectId")
+    abstract suspend fun commentsOfProject(projectId: Long): List<CommentEntity>
+
+    @Query("UPDATE subtasks SET id = :newId WHERE id = :oldId")
+    abstract suspend fun retargetSubtask(oldId: Long, newId: Long)
+
+    @Query("UPDATE comments SET id = :newId WHERE id = :oldId")
+    abstract suspend fun retargetComment(oldId: Long, newId: Long)
+
+    @Query("UPDATE subtasks SET taskId = :newId WHERE taskId = :oldId")
+    abstract suspend fun retargetSubtasksTask(oldId: Long, newId: Long)
+
+    @Query("UPDATE comments SET taskId = :newId WHERE taskId = :oldId")
+    abstract suspend fun retargetCommentsTask(oldId: Long, newId: Long)
+
+    @Query("UPDATE tasks SET columnId = :newId WHERE columnId = :oldId")
+    abstract suspend fun retargetTasksColumn(oldId: Long, newId: Long)
+
+    @Query("UPDATE tasks SET projectId = :newId WHERE projectId = :oldId")
+    abstract suspend fun retargetTasksProject(oldId: Long, newId: Long)
+
+    @Query("UPDATE projects SET id = :newId WHERE id = :oldId")
+    abstract suspend fun retargetProject(oldId: Long, newId: Long)
+
+    @Query("DELETE FROM projects WHERE id = :id")
+    abstract suspend fun deleteProject(id: Long)
+
+    /** A subtask made offline got its real id from the server. */
+    @Transaction
+    open suspend fun remapCreatedSubtask(oldId: Long, newId: Long) {
+        retargetSubtask(oldId, newId)
+        retargetOpsOfTarget(oldId, newId, SUBTASK_OP_TYPES)
+    }
+
+    /** A comment made offline got its real id from the server. */
+    @Transaction
+    open suspend fun remapCreatedComment(oldId: Long, newId: Long) {
+        retargetComment(oldId, newId)
+        retargetOpsOfTarget(oldId, newId, COMMENT_OP_TYPES)
+    }
+
+    /**
+     * A project made offline got its real id (and its real columns) from the server.
+     * The temporary columns are matched to the real ones by position, so tasks stay where they are.
+     */
+    @Transaction
+    open suspend fun remapCreatedProject(oldId: Long, newId: Long, newColumns: List<ColumnEntity>) {
+        val oldColumns = columnsOf(oldId)
+        oldColumns.forEachIndexed { index, old ->
+            val target = newColumns.getOrNull(index) ?: newColumns.lastOrNull() ?: return@forEachIndexed
+            retargetTasksColumn(old.id, target.id)
+        }
+        deleteColumnsOf(oldId)
+        upsertColumns(newColumns)
+        retargetTasksProject(oldId, newId)
+        retargetOpsProject(oldId, newId)
+        retargetProject(oldId, newId)
+    }
+
+    /** Removes a project that never reached the server, with everything in it and everything queued for it. */
+    @Transaction
+    open suspend fun deleteProjectCascade(projectId: Long) {
+        deleteOpsOfProject(projectId)
+        deleteTasksOf(projectId)
+        deleteColumnsOf(projectId)
+        deleteProject(projectId)
+        deleteOrphans()
+    }
+
+    /** Replaces the cached subtasks and comments of several tasks at once. */
+    @Transaction
+    open suspend fun replaceDetails(
+        taskIds: List<Long>,
+        subtasks: List<SubtaskEntity>,
+        comments: List<CommentEntity>,
+    ) {
+        taskIds.forEach {
+            deleteSubtasksOf(it)
+            deleteCommentsOf(it)
+        }
+        upsertSubtasks(subtasks)
+        upsertComments(comments)
+    }
+
     // ---- Several changes at once (all or nothing) --------------------------
 
     // ---- Subtasks and comments ----
@@ -275,6 +419,9 @@ abstract class BoardDao {
     open suspend fun remapCreatedTask(oldId: Long, newId: Long) {
         retargetTask(oldId, newId)
         retargetOps(oldId, newId)
+        // Subtasks and comments written offline belong to the task under its new id.
+        retargetSubtasksTask(oldId, newId)
+        retargetCommentsTask(oldId, newId)
     }
 
     /** Replaces the cached columns and tasks of one project with fresh server data. */
@@ -316,11 +463,15 @@ abstract class BoardDao {
         projects: List<ProjectEntity>,
         columns: List<ColumnEntity>,
         tasks: List<TaskEntity>,
+        subtasks: List<SubtaskEntity> = emptyList(),
+        comments: List<CommentEntity> = emptyList(),
     ) {
         clearAll()
         upsertProjects(projects)
         upsertColumns(columns)
         upsertTasks(tasks)
+        upsertSubtasks(subtasks)
+        upsertComments(comments)
     }
 
     /** Creates a whole project (columns and tasks) in one go. Used by local-only mode. */
@@ -336,13 +487,17 @@ abstract class BoardDao {
     }
 }
 
+/** Queue entry kinds that belong to one subtask / one comment (for cleaning up and renumbering). */
+internal val SUBTASK_OP_TYPES = listOf(OpType.SUBTASK_ADD.name, OpType.SUBTASK_STATUS.name, OpType.SUBTASK_DELETE.name)
+internal val COMMENT_OP_TYPES = listOf(OpType.COMMENT_ADD.name, OpType.COMMENT_DELETE.name)
+
 /** The database itself. Bump [version] and add a migration whenever a table changes. */
 @Database(
     entities = [
         ProjectEntity::class, ColumnEntity::class, TaskEntity::class, PendingOp::class,
         SubtaskEntity::class, CommentEntity::class,
     ],
-    version = 3,
+    version = 4,
     // No schema files: debug and release builds would write the same file at once and clash.
     exportSchema = false,
 )
@@ -372,6 +527,13 @@ abstract class BoardDatabase : RoomDatabase() {
             }
         }
 
+        /** Version 3 -> 4: queued changes can point at a subtask or comment. Existing data is kept untouched. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `pending_ops` ADD COLUMN `targetId` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -390,7 +552,7 @@ abstract class BoardDatabase : RoomDatabase() {
 
         fun create(context: Context): BoardDatabase =
             Room.databaseBuilder(context, BoardDatabase::class.java, "kancard.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

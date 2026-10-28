@@ -12,6 +12,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Button
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.remember
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -66,6 +72,34 @@ fun TaskDetailsSheet(
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = onEdit) { Text(stringResource(R.string.task_edit)) }
+            }
+            // The two things done most: finish the task, or put it in another column.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = {
+                    viewModel.closeTask(task)
+                    onDismiss()
+                }) { Text(stringResource(R.string.details_mark_done)) }
+            }
+            val columns by remember(task.projectId) { viewModel.columnsFor(task.projectId) }
+                .collectAsStateWithLifecycle(initialValue = emptyList())
+            if (columns.size > 1) {
+                Text(
+                    stringResource(R.string.details_move_to),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    columns.forEach { column ->
+                        FilterChip(
+                            selected = column.id == task.columnId,
+                            onClick = { if (column.id != task.columnId) viewModel.moveTask(task, column.id, null) },
+                            label = { Text(column.title) },
+                        )
+                    }
+                }
             }
             val due = task.dueDate
             if (due != null) {

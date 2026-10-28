@@ -7,14 +7,20 @@ import com.mmbesar.kancard.security.Connection
 import com.mmbesar.kancard.security.CredentialStore
 import com.mmbesar.kancard.security.Mode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /** One line in the home-screen widget: a column title or a task title. */
 data class WidgetRow(val text: String, val isHeader: Boolean)
@@ -59,6 +65,17 @@ class BoardRepository(
 
     private val _syncState = MutableStateFlow(SyncState.IDLE)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
+
+    private val _projectRemapped = MutableSharedFlow<Pair<Long, Long>>(extraBufferCapacity = 8)
+
+    /** A project made offline got its real id (old id, new id): the screen switches to the new one. */
+    val projectRemapped: SharedFlow<Pair<Long, Long>> = _projectRemapped.asSharedFlow()
+
+    /** When the subtasks and comments of each project were last downloaded (they are many small calls). */
+    private val detailsFetchedAt = ConcurrentHashMap<Long, Long>()
+
+    /** Raised by every write that could make a running download stale (a queued change, a sent change). */
+    @Volatile private var changeStamp = 0L
 
     // ---- What the screens watch -------------------------------------------------------------
 
@@ -114,6 +131,7 @@ class BoardRepository(
         val projects = buildApi(connection).getMyProjects().map { it.toEntity() }
         dbLock.withLock {
             generation++
+            detailsFetchedAt.clear()
             dao.clearAll()
             store.saveConnection(connection)
             store.mode = Mode.KANBOARD
@@ -128,6 +146,7 @@ class BoardRepository(
     suspend fun startLocal(starterProjectName: String) {
         dbLock.withLock {
             generation++
+            detailsFetchedAt.clear()
             dao.clearAll()
             store.clearConnection()
             store.mode = Mode.LOCAL
@@ -142,6 +161,7 @@ class BoardRepository(
     suspend fun reset() {
         dbLock.withLock {
             generation++
+            detailsFetchedAt.clear()
             dao.clearAll()
             store.clearConnection()
             store.mode = Mode.UNSET
@@ -173,8 +193,7 @@ class BoardRepository(
         _syncState.value = SyncState.IDLE
     }
 
-    // ---- Subtasks and comments -------------------------------------------------------------------
-    // These need the server (they are not queued): the cached copy can always be READ offline.
+    // ---- Subtasks and comments: saved on the phone at once, queued for the server ----------------------
 
     fun observeSubtasks(taskId: Long): Flow<List<SubtaskEntity>> = dao.observeSubtasks(taskId)
 
@@ -186,76 +205,69 @@ class BoardRepository(
     suspend fun refreshDetails(task: TaskEntity) {
         if (mode != Mode.KANBOARD || task.id <= 0L) return
         val startedIn = generation
+        val stamp = changeStamp
         val api = api()
         val subtasks = api.getSubtasks(task.id).map { it.toEntity(task.id) }
         val comments = api.getComments(task.id).map { it.toEntity(task.id) }
         dbLock.withLock {
-            // The login was changed while downloading: these rows belong to an old workspace.
-            if (generation != startedIn || dao.taskCount(task.id) == 0) return
+            // Dropped when the login changed while downloading, when anything was queued or sent
+            // meanwhile (the download may be older than that change), or when this task still has
+            // changes waiting (they are sent first, then the copy is refreshed).
+            if (generation != startedIn || stamp != changeStamp ||
+                dao.taskCount(task.id) == 0 || dao.countOpsOfTask(task.id) > 0
+            ) return
             dao.replaceSubtasks(task.id, subtasks)
             dao.replaceComments(task.id, comments)
         }
     }
 
-    /** After a successful change: a failing refresh must not look like a failed change (a retry would duplicate it). */
-    private suspend fun refreshQuietly(task: TaskEntity) {
-        try {
-            refreshDetails(task)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: ApiException) {
-            // The change itself worked; the list refreshes the next time the screen opens.
-        }
-    }
-
     suspend fun addSubtask(task: TaskEntity, title: String) {
-        if (mode == Mode.LOCAL) {
-            dbLock.withLock {
-                val id = dao.nextSubtaskId()
-                dao.upsertSubtasks(listOf(SubtaskEntity(id, task.id, title, 0, id.toInt())))
-            }
-        } else {
-            requireOnServer(task)
-            api().createSubtask(task.id, title)
-            refreshQuietly(task)
+        dbLock.withLock {
+            val local = mode == Mode.LOCAL
+            val id = if (local) dao.nextSubtaskId() else store.nextTempId()
+            dao.upsertSubtasks(listOf(SubtaskEntity(id, task.id, title.trim(), 0, dao.nextSubtaskPosition(task.id))))
+            if (!local) enqueue(OpType.SUBTASK_ADD, task.id, task.projectId, targetId = id)
         }
     }
 
     suspend fun setSubtaskStatus(subtask: SubtaskEntity, status: Int) {
-        if (mode != Mode.LOCAL) api().updateSubtaskStatus(subtask.id, subtask.taskId, status)
-        dbLock.withLock { dao.setSubtaskStatus(subtask.id, status) }
+        dbLock.withLock {
+            dao.setSubtaskStatus(subtask.id, status)
+            if (mode != Mode.LOCAL) {
+                enqueue(OpType.SUBTASK_STATUS, subtask.taskId, dao.projectOfTask(subtask.taskId) ?: 0L, subtask.id)
+            }
+        }
     }
 
     suspend fun deleteSubtask(subtask: SubtaskEntity) {
-        if (mode != Mode.LOCAL) api().removeSubtask(subtask.id)
-        dbLock.withLock { dao.deleteSubtask(subtask.id) }
+        dbLock.withLock {
+            dao.deleteSubtask(subtask.id)
+            if (mode != Mode.LOCAL) {
+                enqueue(OpType.SUBTASK_DELETE, subtask.taskId, dao.projectOfTask(subtask.taskId) ?: 0L, subtask.id)
+            }
+        }
     }
 
-    /** [localAuthor] is only used in local-only mode (the server knows who you are). */
+    /** [localAuthor] is the name shown for your own comments until the server tells us your name. */
     suspend fun addComment(task: TaskEntity, text: String, localAuthor: String) {
-        if (mode == Mode.LOCAL) {
-            dbLock.withLock {
-                val id = dao.nextCommentId()
-                dao.upsertComments(
-                    listOf(CommentEntity(id, task.id, localAuthor, text, System.currentTimeMillis() / 1000)),
-                )
-            }
-        } else {
-            requireOnServer(task)
-            val api = api()
-            api.createComment(task.id, api.myUserId(), text)
-            refreshQuietly(task)
+        dbLock.withLock {
+            val local = mode == Mode.LOCAL
+            val id = if (local) dao.nextCommentId() else store.nextTempId()
+            val author = if (local) localAuthor else store.loadConnection()?.username ?: localAuthor
+            dao.upsertComments(
+                listOf(CommentEntity(id, task.id, author, text.trim(), System.currentTimeMillis() / 1000)),
+            )
+            if (!local) enqueue(OpType.COMMENT_ADD, task.id, task.projectId, targetId = id)
         }
     }
 
     suspend fun deleteComment(comment: CommentEntity) {
-        if (mode != Mode.LOCAL) api().removeComment(comment.id)
-        dbLock.withLock { dao.deleteComment(comment.id) }
-    }
-
-    /** Tasks created offline have no server id yet, so nothing can be attached to them. */
-    private fun requireOnServer(task: TaskEntity) {
-        if (task.id <= 0L) throw ApiException(ApiException.Kind.REJECTED, "The task has not reached the server yet")
+        dbLock.withLock {
+            dao.deleteComment(comment.id)
+            if (mode != Mode.LOCAL) {
+                enqueue(OpType.COMMENT_DELETE, comment.taskId, dao.projectOfTask(comment.taskId) ?: 0L, comment.id)
+            }
+        }
     }
 
     // ---- Tasks: written locally at once, queued for the server -------------------------------------
@@ -273,7 +285,7 @@ class BoardRepository(
             val local = mode == Mode.LOCAL
             val swimlane = dao.swimlaneInColumn(columnId) ?: dao.anySwimlane(projectId) ?: 0L
             // Offline tasks get a temporary NEGATIVE id until the server gives the real one.
-            val id = if (local) dao.nextTaskId() else minOf(dao.minTaskId() ?: 0L, 0L) - 1L
+            val id = if (local) dao.nextTaskId() else store.nextTempId()
             val task = TaskEntity(
                 id = id,
                 projectId = projectId,
@@ -340,42 +352,88 @@ class BoardRepository(
      * Two edits of the same kind to the same task share ONE entry, because the
      * values are read from the task when the entry is finally sent.
      */
-    private suspend fun enqueue(type: OpType, taskId: Long, projectId: Long) {
-        if (type == OpType.DELETE) {
-            // Whatever was queued for this task is pointless now.
-            dao.deleteOpsOfTask(taskId)
-            // A task the server never saw (negative id) needs no delete request.
-            if (taskId > 0) dao.insertOp(PendingOp(type = type.name, taskId = taskId, projectId = projectId))
-            return
-        }
-        if (type == OpType.CREATE) {
-            dao.insertOp(
+    private suspend fun enqueue(type: OpType, taskId: Long, projectId: Long, targetId: Long = 0L) {
+        changeStamp++
+        when (type) {
+            OpType.DELETE -> {
+                // Whatever was queued for this task is pointless now.
+                dao.deleteOpsOfTask(taskId)
+                // A task the server never saw (negative id) needs no delete request.
+                if (taskId > 0) dao.insertOp(PendingOp(type = type.name, taskId = taskId, projectId = projectId))
+            }
+
+            OpType.CREATE -> dao.insertOp(
                 PendingOp(type = type.name, taskId = taskId, projectId = projectId, ref = "kancard-" + UUID.randomUUID()),
             )
-        } else if (dao.countOps(type.name, taskId, inFlightOpId) == 0) {
-            dao.insertOp(PendingOp(type = type.name, taskId = taskId, projectId = projectId))
+
+            OpType.SUBTASK_ADD, OpType.COMMENT_ADD -> dao.insertOp(
+                PendingOp(type = type.name, taskId = taskId, projectId = projectId, targetId = targetId),
+            )
+
+            OpType.SUBTASK_STATUS -> {
+                // Values are read when sending, so one entry per subtask is enough.
+                if (dao.countOpsFor(type.name, targetId, inFlightOpId) == 0) {
+                    dao.insertOp(PendingOp(type = type.name, taskId = taskId, projectId = projectId, targetId = targetId))
+                }
+            }
+
+            OpType.SUBTASK_DELETE, OpType.COMMENT_DELETE -> {
+                val kinds = if (type == OpType.SUBTASK_DELETE) SUBTASK_OP_TYPES else COMMENT_OP_TYPES
+                // Pointless changes to a thing that is being removed.
+                dao.deleteOpsOfTarget(targetId, kinds)
+                // Never reached the server (negative id): nothing to delete there.
+                if (targetId > 0) {
+                    dao.insertOp(PendingOp(type = type.name, taskId = taskId, projectId = projectId, targetId = targetId))
+                }
+            }
+
+            OpType.PROJECT_CREATE, OpType.PROJECT_ARCHIVE -> dao.insertOp(
+                PendingOp(type = type.name, taskId = 0L, projectId = projectId),
+            )
+
+            else -> if (dao.countOps(type.name, taskId, inFlightOpId) == 0) {
+                dao.insertOp(PendingOp(type = type.name, taskId = taskId, projectId = projectId))
+            }
         }
     }
 
     // ---- Projects (these need the server, so they need a connection) -------------------------------
 
-    /** Returns the id of the new project. */
+    /**
+     * Returns the id of the new project. On a server the project is made on the phone first
+     * (with Kanboard's usual four columns) and created there when a connection is available.
+     */
     suspend fun createProject(name: String): Long {
         if (mode == Mode.LOCAL) {
-            return dbLock.withLock { createLocalProject(name) }
+            return dbLock.withLock {
+                createLocalProject(name).also { store.selectedProjectId = it }
+            }
         }
-        val id = api().createProject(name.trim())
-        sync(listOf(id))
-        return id
+        return dbLock.withLock {
+            val projectId = store.nextTempId()
+            val columns = LOCAL_COLUMNS.mapIndexed { index, title ->
+                ColumnEntity(store.nextTempId(), projectId, title, index + 1)
+            }
+            dao.insertProjectWithContent(ProjectEntity(projectId, name.trim(), isActive = true), columns, emptyList())
+            enqueue(OpType.PROJECT_CREATE, 0L, projectId)
+            // Chosen here, under the lock: a sync that gives the project its real id keeps this choice in step.
+            store.selectedProjectId = projectId
+            projectId
+        }
     }
 
-    /** Hides a project. On a server this disables it; nothing is ever deleted. */
+    /** Hides a project. On a server this disables it when a connection is available; nothing is ever deleted. */
     suspend fun archiveProject(projectId: Long) {
-        if (mode == Mode.LOCAL) {
-            dbLock.withLock { dao.setProjectActive(projectId, active = false) }
-        } else {
-            api().disableProject(projectId)
-            sync(emptyList())
+        dbLock.withLock {
+            when {
+                mode == Mode.LOCAL -> dao.setProjectActive(projectId, active = false)
+                // The server never heard of it: just forget it.
+                projectId < 0 -> dao.deleteProjectCascade(projectId)
+                else -> {
+                    dao.setProjectActive(projectId, active = false)
+                    enqueue(OpType.PROJECT_ARCHIVE, 0L, projectId)
+                }
+            }
         }
     }
 
@@ -402,7 +460,7 @@ class BoardRepository(
      * (the selected one first). Never throws for connection problems: they are
      * reported in the result and in [syncState].
      */
-    suspend fun sync(projectIds: Collection<Long>?): SyncResult {
+    suspend fun sync(projectIds: Collection<Long>?, force: Boolean = false): SyncResult {
         if (mode != Mode.KANBOARD) return SyncResult()
         return syncLock.withLock {
             val generationAtStart = generation
@@ -430,8 +488,15 @@ class BoardRepository(
                     wanted += projectIds
                 }
                 wanted += drained.projects
+                // Projects made offline have no server id yet (their id is negative): nothing to download.
+                wanted.removeAll { it <= 0L }
                 for (id in wanted) {
                     if (dao.project(id)?.isActive == true) pullProject(api, id, generationAtStart)
+                }
+                // Subtasks and comments last, so the boards appear first. A problem here must not
+                // fail the whole sync: the lists are already fresh.
+                for (id in wanted) {
+                    if (dao.project(id)?.isActive == true) pullDetails(api, id, generationAtStart, force || id in drained.projects)
                 }
 
                 _syncState.value = SyncState.IDLE
@@ -465,13 +530,21 @@ class BoardRepository(
                 dao.firstOp()?.also { inFlightOpId = it.id }
             } ?: break
             try {
-                executeOp(api, op)
-                dbLock.withLock { dao.deleteOp(op.id) }
+                val type = OpType.entries.firstOrNull { it.name == op.type }
+                if (type != null) executeOp(api, op, type)
+                // (An entry of an unknown kind, written by some other version, is simply removed.)
+                dbLock.withLock {
+                    dao.deleteOp(op.id)
+                    changeStamp++
+                }
             } catch (e: ApiException) {
+                // Problems that go away by themselves: no connection, a certificate or login to fix,
+                // a server or proxy that is down or answers with something that is not Kanboard.
                 val temporary = e.kind == ApiException.Kind.NETWORK ||
                     e.kind == ApiException.Kind.CERTIFICATE ||
                     e.kind == ApiException.Kind.UNAUTHORIZED ||
-                    e.kind == ApiException.Kind.NOT_CONFIGURED
+                    e.kind == ApiException.Kind.NOT_CONFIGURED ||
+                    e.kind == ApiException.Kind.BAD_RESPONSE
                 if (temporary) {
                     // Keep the change; it is sent when the problem is gone.
                     _syncState.value = stateFor(e)
@@ -483,9 +556,7 @@ class BoardRepository(
                     op.attempts >= 2
                 dbLock.withLock {
                     if (giveUp) {
-                        dao.deleteOp(op.id)
-                        // A task that could not be created leaves nothing else to send.
-                        if (op.type == OpType.CREATE.name) dao.deleteOpsOfTask(op.taskId)
+                        dropOp(op)
                     } else {
                         dao.bumpAttempts(op.id)
                     }
@@ -496,6 +567,12 @@ class BoardRepository(
                 }
                 dropped++
                 touchedProjects += op.projectId
+            } catch (e: android.database.SQLException) {
+                // A local database conflict while renumbering: this entry cannot be completed. Drop it
+                // (the next download shows the truth) instead of blocking the whole queue forever.
+                dbLock.withLock { dropOp(op) }
+                dropped++
+                touchedProjects += op.projectId
             } finally {
                 inFlightOpId = 0L
             }
@@ -503,9 +580,29 @@ class BoardRepository(
         return DrainResult(dropped, touchedProjects, null)
     }
 
+    /** Removes a queue entry that can never succeed, and everything that hangs on it. Inside [dbLock]. */
+    private suspend fun dropOp(op: PendingOp) {
+        changeStamp++
+        dao.deleteOp(op.id)
+        when (op.type) {
+            OpType.CREATE.name -> dao.deleteOpsOfTask(op.taskId)
+            OpType.SUBTASK_ADD.name -> dao.deleteOpsOfTarget(op.targetId, SUBTASK_OP_TYPES)
+            OpType.COMMENT_ADD.name -> dao.deleteOpsOfTarget(op.targetId, COMMENT_OP_TYPES)
+            OpType.PROJECT_CREATE.name -> dao.deleteProjectCascade(op.projectId)
+        }
+    }
+
+    /**
+     * Runs [block] to the end even if the sync is cancelled meanwhile: the server has already done
+     * its part, and the phone must record that together with removing the queue entry.
+     */
+    private suspend fun <T> recordAnswer(block: suspend () -> T): T =
+        withContext(NonCancellable) { dbLock.withLock { block() } }
+
     /** Sends one queued change. The values come from the task's CURRENT local state. */
-    private suspend fun executeOp(api: BoardApi, op: PendingOp) {
-        when (OpType.valueOf(op.type)) {
+    private suspend fun executeOp(api: BoardApi, op: PendingOp, type: OpType) {
+        val startedIn = generation
+        when (type) {
             OpType.CREATE -> {
                 val task = dao.task(op.taskId) ?: return
                 // A retry after a dropped connection must not create the task twice.
@@ -514,14 +611,15 @@ class BoardRepository(
                         task.projectId, task.columnId, task.swimlaneId, task.title,
                         task.description, task.dueDate.orEmpty(), task.colorId, task.priority, op.ref,
                     )
-                dbLock.withLock {
+                recordAnswer {
                     if (dao.task(task.id) != null) {
                         // Swap the temporary id for the real one, also in the queued changes.
                         dao.remapCreatedTask(task.id, newId)
-                    } else {
+                    } else if (generation == startedIn) {
                         // The task was deleted while it was being created: remove it on the server too.
                         dao.insertOp(PendingOp(type = OpType.DELETE.name, taskId = newId, projectId = task.projectId))
                     }
+                    dao.deleteOp(op.id)
                 }
             }
 
@@ -555,6 +653,117 @@ class BoardRepository(
                     if (e.kind != ApiException.Kind.REJECTED) throw e
                 }
             }
+
+            OpType.SUBTASK_ADD -> {
+                val row = dao.subtask(op.targetId) ?: return
+                if (op.taskId <= 0L) return
+                val known = dao.subtaskIdsOf(op.taskId).toSet()
+                // A retry after a dropped connection must not add it twice.
+                val existing = api.getSubtasks(op.taskId).firstOrNull { it.title == row.title && it.id !in known }
+                val newId = existing?.id ?: api.createSubtask(op.taskId, row.title)
+                recordAnswer {
+                    if (dao.subtask(row.id) != null) {
+                        dao.remapCreatedSubtask(row.id, newId)
+                    } else if (generation == startedIn) {
+                        // Deleted while it was being sent: remove it on the server too.
+                        dao.insertOp(
+                            PendingOp(type = OpType.SUBTASK_DELETE.name, taskId = op.taskId, projectId = op.projectId, targetId = newId),
+                        )
+                    }
+                    dao.deleteOp(op.id)
+                }
+            }
+
+            OpType.SUBTASK_STATUS -> {
+                val row = dao.subtask(op.targetId) ?: return
+                if (row.id <= 0L || row.taskId <= 0L) return
+                api.updateSubtaskStatus(row.id, row.taskId, row.status)
+            }
+
+            OpType.SUBTASK_DELETE -> {
+                if (op.targetId <= 0L) return
+                try {
+                    api.removeSubtask(op.targetId)
+                } catch (e: ApiException) {
+                    if (e.kind != ApiException.Kind.REJECTED) throw e
+                }
+            }
+
+            OpType.COMMENT_ADD -> {
+                val row = dao.comment(op.targetId) ?: return
+                if (op.taskId <= 0L) return
+                val known = dao.commentIdsOf(op.taskId).toSet()
+                val existing = api.getComments(op.taskId).firstOrNull { it.comment == row.content && it.id !in known }
+                val newId = existing?.id ?: api.createComment(op.taskId, api.myUserId(), row.content)
+                recordAnswer {
+                    if (dao.comment(row.id) != null) {
+                        dao.remapCreatedComment(row.id, newId)
+                    } else if (generation == startedIn) {
+                        dao.insertOp(
+                            PendingOp(type = OpType.COMMENT_DELETE.name, taskId = op.taskId, projectId = op.projectId, targetId = newId),
+                        )
+                    }
+                    dao.deleteOp(op.id)
+                }
+            }
+
+            OpType.COMMENT_DELETE -> {
+                if (op.targetId <= 0L) return
+                try {
+                    api.removeComment(op.targetId)
+                } catch (e: ApiException) {
+                    if (e.kind != ApiException.Kind.REJECTED) throw e
+                }
+            }
+
+            OpType.PROJECT_CREATE -> {
+                val project = dao.project(op.projectId) ?: return
+                val known = dao.allProjects().map { it.id }.toSet()
+                // Kanboard project names are unique. A project that already exists under this name and
+                // that the phone does not know (a retry after a dropped connection) is adopted;
+                // if the name is taken by a project we know, the new one gets "Name (2)", "(3)" ...
+                val serverProjects = api.getMyProjects()
+                var name = project.name
+                val existing = serverProjects.firstOrNull { it.name == name && it.id !in known }
+                var created: Long? = existing?.id
+                var attempt = 1
+                while (created == null) {
+                    try {
+                        created = api.createProject(name)
+                    } catch (e: ApiException) {
+                        if (e.kind != ApiException.Kind.REJECTED || attempt >= 5) throw e
+                        attempt++
+                        name = project.name + " ($attempt)"
+                    }
+                }
+                val newId: Long = created
+                val columns = api.getColumns(newId).map { it.toEntity(newId) }
+                // Without its columns the project cannot be completed: try again later (it is adopted then).
+                if (columns.isEmpty()) throw ApiException(ApiException.Kind.BAD_RESPONSE, "The new project has no columns")
+                val finalName = name
+                recordAnswer {
+                    if (dao.project(op.projectId) != null) {
+                        // Chosen before the swap, so the screen never sees a moment without its project.
+                        if (store.selectedProjectId == op.projectId) store.selectedProjectId = newId
+                        dao.remapCreatedProject(op.projectId, newId, columns)
+                        if (finalName != project.name) dao.renameProject(newId, finalName)
+                    } else if (generation == startedIn) {
+                        // Archived on the phone while it was being created: hide it on the server too.
+                        dao.insertOp(PendingOp(type = OpType.PROJECT_ARCHIVE.name, taskId = 0L, projectId = newId))
+                    }
+                    dao.deleteOp(op.id)
+                }
+                if (dao.project(newId) != null) _projectRemapped.tryEmit(op.projectId to newId)
+            }
+
+            OpType.PROJECT_ARCHIVE -> {
+                if (op.projectId <= 0L) return
+                try {
+                    api.disableProject(op.projectId)
+                } catch (e: ApiException) {
+                    if (e.kind != ApiException.Kind.REJECTED) throw e
+                }
+            }
         }
     }
 
@@ -581,6 +790,41 @@ class BoardRepository(
         }
     }
 
+    /**
+     * Keeps the subtasks and comments of the open tasks on the phone, so they can be read (and the
+     * subtask counts shown) without a connection. Throttled: it is many small requests.
+     */
+    private suspend fun pullDetails(api: BoardApi, projectId: Long, generationAtStart: Int, force: Boolean) {
+        val now = System.currentTimeMillis()
+        val last = detailsFetchedAt[projectId] ?: 0L
+        if (!force && now - last < DETAILS_MAX_AGE_MS) return
+        val ids = dao.syncedOpenTaskIds(projectId).take(DETAILS_MAX_TASKS)
+        var allWritten = true
+        for (chunk in ids.chunked(DETAILS_CHUNK)) {
+            val details = try {
+                api.getDetails(chunk)
+            } catch (e: ApiException) {
+                // A server that does not like batches must not break the sync; lost connections still stop it.
+                val connection = e.kind == ApiException.Kind.NETWORK || e.kind == ApiException.Kind.CERTIFICATE ||
+                    e.kind == ApiException.Kind.UNAUTHORIZED
+                if (connection) throw e
+                detailsFetchedAt[projectId] = now
+                return
+            }
+            val subtasks = details.flatMap { (taskId, pair) -> pair.first.map { it.toEntity(taskId) } }
+            val comments = details.flatMap { (taskId, pair) -> pair.second.map { it.toEntity(taskId) } }
+            dbLock.withLock {
+                // Skipped if the workspace changed, or if there are changes to send first.
+                if (generationAtStart == generation && dao.pendingCount() == 0) {
+                    dao.replaceDetails(details.keys.toList(), subtasks, comments)
+                } else {
+                    allWritten = false
+                }
+            }
+        }
+        if (allWritten) detailsFetchedAt[projectId] = now
+    }
+
     // ---- Backups ------------------------------------------------------------------------------------------
 
     /** Everything stored on the phone as a backup file. */
@@ -594,18 +838,19 @@ class BoardRepository(
                     archived = !project.isActive,
                     columns = dao.columnsOf(project.id),
                     tasks = dao.tasksOf(project.id),
+                    subtasks = dao.subtasksOfProject(project.id).groupBy { it.taskId },
+                    comments = dao.commentsOfProject(project.id).groupBy { it.taskId },
                 )
             }
         return BackupCodec.encode(BackupFile(projects = projects))
     }
 
     /**
-     * Kanboard mode: syncs completely first, then writes the snapshot from the phone's copy.
-     * If the sync cannot finish, nothing is written, so you never get a half-empty file.
+     * Kanboard mode: tries to sync first, then writes the snapshot from the phone's copy.
+     * Without a connection the snapshot is simply what is on the phone right now.
      */
     suspend fun exportServerSnapshot(): String {
-        val result = sync(null)
-        result.error?.let { throw it }
+        sync(null, force = true)
         return exportLocalBackup(onlyActive = true)
     }
 
@@ -617,6 +862,10 @@ class BoardRepository(
         val projects = mutableListOf<ProjectEntity>()
         val columns = mutableListOf<ColumnEntity>()
         val tasks = mutableListOf<TaskEntity>()
+        val subtasks = mutableListOf<SubtaskEntity>()
+        val comments = mutableListOf<CommentEntity>()
+        var nextSubtask = 1L
+        var nextComment = 1L
         var nextProject = 1L
         var nextColumn = 1L
         var nextTask = 1L
@@ -627,8 +876,9 @@ class BoardRepository(
                 val columnId = nextColumn++
                 columns += ColumnEntity(columnId, projectId, column.title.trim(), columnIndex + 1)
                 column.tasks.forEachIndexed { taskIndex, task ->
+                    val taskId = nextTask++
                     tasks += TaskEntity(
-                        id = nextTask++,
+                        id = taskId,
                         projectId = projectId,
                         columnId = columnId,
                         swimlaneId = 0L,
@@ -640,11 +890,17 @@ class BoardRepository(
                         colorId = task.color,
                         priority = task.priority.coerceIn(0, 3),
                     )
+                    task.subtasks.filter { it.title.isNotBlank() }.forEachIndexed { index, sub ->
+                        subtasks += SubtaskEntity(nextSubtask++, taskId, sub.title.trim(), sub.status.coerceIn(0, 2), index + 1)
+                    }
+                    task.comments.forEach { c ->
+                        comments += CommentEntity(nextComment++, taskId, c.author, c.content, c.created)
+                    }
                 }
             }
         }
         dbLock.withLock {
-            dao.replaceEverything(projects, columns, tasks)
+            dao.replaceEverything(projects, columns, tasks, subtasks, comments)
             store.selectedProjectId = 0L
         }
     }
@@ -654,6 +910,8 @@ class BoardRepository(
         archived: Boolean,
         columns: List<ColumnEntity>,
         tasks: List<TaskEntity>,
+        subtasks: Map<Long, List<SubtaskEntity>>,
+        comments: Map<Long, List<CommentEntity>>,
     ): BackupProject {
         val byColumn = tasks.groupBy { it.columnId }
         return BackupProject(
@@ -672,6 +930,10 @@ class BoardRepository(
                                 closed = !it.isActive,
                                 color = it.colorId,
                                 priority = it.priority,
+                                subtasks = subtasks[it.id].orEmpty().sortedBy { sub -> sub.position }
+                                    .map { sub -> BackupSubtask(sub.title, sub.status) },
+                                comments = comments[it.id].orEmpty().sortedBy { c -> c.created }
+                                    .map { c -> BackupComment(c.author, c.content, c.created) },
                             )
                         },
                 )
@@ -695,6 +957,11 @@ class BoardRepository(
     }
 
     private companion object {
+        /** Subtasks and comments are downloaded for at most this many open tasks per project, in groups. */
+        const val DETAILS_MAX_TASKS = 400
+        const val DETAILS_CHUNK = 40
+        const val DETAILS_MAX_AGE_MS = 2 * 60 * 1000L
+
         /** Every new local project gets these four columns. */
         val LOCAL_COLUMNS = listOf("Backlog", "Ready", "Work in progress", "Done")
     }

@@ -2,5 +2,4 @@
 <resources>
     <!-- Catppuccin Macchiato "base" -->
     <color name="window_background">#24273A</color>
-    <color name="ic_launcher_background">#C6A0F6</color>
 </resources>

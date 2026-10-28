@@ -19,8 +19,8 @@ android {
         minSdk = 23
         targetSdk = 36
         // Bump versionCode on every release and never reuse one.
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     // Release signing is only set up when the release workflow provides the

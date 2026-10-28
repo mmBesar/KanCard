@@ -14,7 +14,7 @@ object WidgetPrefs {
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     fun projectFor(context: Context, appWidgetId: Int): Long? =
-        prefs(context).getLong(appWidgetId.toString(), 0L).takeIf { it > 0L }
+        prefs(context).getLong(appWidgetId.toString(), 0L).takeIf { it != 0L }
 
     fun set(context: Context, appWidgetId: Int, projectId: Long) {
         prefs(context).edit().putLong(appWidgetId.toString(), projectId).apply()
@@ -26,7 +26,15 @@ object WidgetPrefs {
         editor.apply()
     }
 
+    /** A project made offline got its real id: widgets that showed it follow it. */
+    fun remapProject(context: Context, oldId: Long, newId: Long) {
+        val p = prefs(context)
+        val editor = p.edit()
+        p.all.forEach { (key, value) -> if (value == oldId) editor.putLong(key, newId) }
+        editor.apply()
+    }
+
     /** Every project that at least one widget shows (the background refresh needs these). */
     fun allProjectIds(context: Context): Set<Long> =
-        prefs(context).all.values.mapNotNull { it as? Long }.filter { it > 0L }.toSet()
+        prefs(context).all.values.mapNotNull { it as? Long }.filter { it != 0L }.toSet()
 }

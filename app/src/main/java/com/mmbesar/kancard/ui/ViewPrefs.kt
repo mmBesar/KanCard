@@ -34,9 +34,27 @@ class ViewPrefs(context: Context) {
     private val _rememberLast = MutableStateFlow(prefs.getBoolean(KEY_REMEMBER, false))
     val rememberLast: StateFlow<Boolean> = _rememberLast.asStateFlow()
 
+    private val _todayByProject = MutableStateFlow(prefs.getBoolean(KEY_TODAY_TREE, false))
+
+    /** The Today screen as a tree (project, tasks, subtasks) instead of sections by time. */
+    val todayByProject: StateFlow<Boolean> = _todayByProject.asStateFlow()
+
+    fun setTodayByProject(on: Boolean) {
+        prefs.edit().putBoolean(KEY_TODAY_TREE, on).apply()
+        _todayByProject.value = on
+    }
+
     fun setDefault(projectId: Long, view: ProjectView) {
         prefs.edit().putString(PREFIX + projectId, view.name).apply()
         _defaults.value = _defaults.value + (projectId to view)
+    }
+
+    /** A project made offline got its real id: it keeps the view it had. */
+    fun moveDefault(oldId: Long, newId: Long) {
+        val view = _defaults.value[oldId] ?: return
+        prefs.edit().remove(PREFIX + oldId).apply()
+        _defaults.value = _defaults.value - oldId
+        setDefault(newId, view)
     }
 
     fun setRememberLast(on: Boolean) {
@@ -48,6 +66,7 @@ class ViewPrefs(context: Context) {
         private const val FILE = "kancard_views"
         private const val PREFIX = "view_"
         private const val KEY_REMEMBER = "remember_last_view"
+        private const val KEY_TODAY_TREE = "today_by_project"
 
         private fun readAll(prefs: SharedPreferences): Map<Long, ProjectView> {
             val result = mutableMapOf<Long, ProjectView>()

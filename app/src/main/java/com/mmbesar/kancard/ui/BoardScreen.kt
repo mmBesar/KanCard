@@ -106,6 +106,7 @@ fun BoardScreen(viewModel: BoardViewModel, themePrefs: ThemePrefs, viewPrefs: Vi
     val subtaskCounts by viewModel.subtaskCounts.collectAsStateWithLifecycle()
     val viewDefaults by viewPrefs.defaults.collectAsStateWithLifecycle()
     val rememberLast by viewPrefs.rememberLast.collectAsStateWithLifecycle()
+    val todayByProject by viewPrefs.todayByProject.collectAsStateWithLifecycle()
 
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -363,6 +364,9 @@ fun BoardScreen(viewModel: BoardViewModel, themePrefs: ThemePrefs, viewPrefs: Vi
             }
             if (tab == TAB_TODAY) {
                 TodayView(
+                    viewModel = viewModel,
+                    byProject = todayByProject,
+                    onByProjectChange = { viewPrefs.setTodayByProject(it) },
                     groups = groups,
                     projectNames = projectNames,
                     pendingIds = pendingIds,
@@ -424,6 +428,7 @@ fun BoardScreen(viewModel: BoardViewModel, themePrefs: ThemePrefs, viewPrefs: Vi
                                 refreshing = refreshing,
                                 onRefresh = { viewModel.refreshCurrent() },
                                 onOpen = { detailsId = it.id },
+                                dragEnabled = needle.isEmpty(),
                             )
                         }
                     }

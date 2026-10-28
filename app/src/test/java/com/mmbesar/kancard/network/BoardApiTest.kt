@@ -234,4 +234,33 @@ class BoardApiTest {
         assertEquals("hi", api.getComments(3).single().comment)
         assertTrue(api.getComments(4).isEmpty())
     }
+
+    @Test
+    fun batchDetailsAreMatchedByIdEvenWhenAnsweredOutOfOrder() = runBlocking {
+        // Two tasks -> four calls (ids 1..4). The server answers in reverse order and one call failed.
+        server.enqueue(
+            MockResponse().setBody(
+                """[
+                {"jsonrpc":"2.0","id":4,"result":[{"id":"9","comment":"Hi","name":"","username":"bob","date_creation":"5"}]},
+                {"jsonrpc":"2.0","id":3,"error":{"code":-32603,"message":"boom"}},
+                {"jsonrpc":"2.0","id":2,"result":false},
+                {"jsonrpc":"2.0","id":1,"result":[{"id":"7","title":"Step","status":"2","position":"1"}]}
+                ]""",
+            ),
+        )
+        server.start()
+        val api = BoardApi(
+            HttpClients.create(pinnedSha256 = null, allowCleartext = true),
+            server.url("/jsonrpc.php").toString(),
+            "alice",
+            "secret",
+        )
+        val result = api.getDetails(listOf(100L, 200L))
+        // Task 100: subtasks found, comments "false" = none. Task 200: one answer failed -> unknown, left out.
+        assertEquals(listOf(7L), result.getValue(100L).first.map { it.id })
+        assertTrue(result.getValue(100L).second.isEmpty())
+        assertTrue(200L !in result)
+        // One HTTP request carried all four calls.
+        assertEquals(1, server.requestCount)
+    }
 }

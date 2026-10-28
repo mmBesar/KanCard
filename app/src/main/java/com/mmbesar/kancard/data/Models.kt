@@ -76,7 +76,15 @@ data class CommentEntity(
 data class SubtaskCount(val taskId: Long, val total: Int, val done: Int)
 
 /** The kinds of change that wait in the queue until the server can be reached. */
-enum class OpType { CREATE, UPDATE, MOVE, STATUS, DELETE }
+enum class OpType {
+    CREATE, UPDATE, MOVE, STATUS, DELETE,
+
+    /** Subtasks and comments: [PendingOp.targetId] says which one. */
+    SUBTASK_ADD, SUBTASK_STATUS, SUBTASK_DELETE, COMMENT_ADD, COMMENT_DELETE,
+
+    /** Projects: a project made offline waits for the server; archiving is sent later too. */
+    PROJECT_CREATE, PROJECT_ARCHIVE,
+}
 
 /**
  * One change waiting to be sent to the server.
@@ -101,6 +109,11 @@ data class PendingOp(
      * back, the retry finds the task by this tag instead of creating a second one.
      */
     val ref: String = "",
+    /**
+     * Only for the subtask and comment changes: the id of the subtask or comment
+     * (negative while the server has not seen it yet).
+     */
+    val targetId: Long = 0,
 )
 
 // ---- Converting Kanboard answers into table rows ---------------------------

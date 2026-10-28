@@ -83,4 +83,37 @@ class BackupCodecTest {
         )
         assertThrows(IllegalArgumentException::class.java) { BackupCodec.decode(BackupCodec.encode(badDate)) }
     }
+
+    @Test
+    fun subtasksAndCommentsSurviveTheRoundTrip() {
+        val file = BackupFile(
+            projects = listOf(
+                BackupProject(
+                    name = "P",
+                    columns = listOf(
+                        BackupColumn(
+                            "Todo",
+                            listOf(
+                                BackupTask(
+                                    "T",
+                                    subtasks = listOf(BackupSubtask("a", 2), BackupSubtask("b")),
+                                    comments = listOf(BackupComment("me", "hello", 5L)),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val decoded = BackupCodec.decode(BackupCodec.encode(file))
+        assertEquals(file, decoded)
+        assertEquals(2, decoded.projects[0].columns[0].tasks[0].subtasks[0].status)
+    }
+
+    @Test
+    fun oldBackupsWithoutSubtasksStillLoad() {
+        val old = """{"format":"kancard-backup","version":1,"projects":[{"name":"P","columns":[{"title":"C","tasks":[{"title":"T"}]}]}]}"""
+        val decoded = BackupCodec.decode(old)
+        assertTrue(decoded.projects[0].columns[0].tasks[0].subtasks.isEmpty())
+    }
 }

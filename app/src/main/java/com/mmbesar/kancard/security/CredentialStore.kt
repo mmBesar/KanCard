@@ -58,6 +58,17 @@ class CredentialStore(context: Context) {
         }
 
     /** The project shown on the board (0 = none chosen yet). */
+    /**
+     * Next temporary id for something made offline: -1, -2, -3 ... never reused, even after the
+     * thing is deleted or the app restarts (a late answer from the server must never meet a new row).
+     */
+    @Synchronized
+    fun nextTempId(): Long {
+        val next = prefs.getLong(KEY_TEMP_ID, 0L) - 1L
+        prefs.edit().putLong(KEY_TEMP_ID, next).apply()
+        return next
+    }
+
     var selectedProjectId: Long
         get() = prefs.getLong(KEY_PROJECT, 0L)
         set(value) {
@@ -155,6 +166,7 @@ class CredentialStore(context: Context) {
 
         const val KEY_MODE = "mode"
         const val KEY_PROJECT = "selected_project"
+        const val KEY_TEMP_ID = "temp_id"
         const val KEY_ENDPOINT = "endpoint"
         const val KEY_USER = "username"
         const val KEY_TOKEN = "token"

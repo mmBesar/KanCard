@@ -1,7 +1,6 @@
 package com.mmbesar.kancard.ui
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.height
@@ -11,7 +10,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -80,9 +78,9 @@ fun SetupScreen(viewModel: BoardViewModel) {
         Box(
             modifier = Modifier
                 .size(88.dp)
-                .clip(RoundedCornerShape(26.dp))
-                .background(colorResource(R.color.ic_launcher_background)),
+                .clip(RoundedCornerShape(26.dp)),
         ) {
+            Image(painterResource(R.drawable.ic_launcher_bg), contentDescription = null, modifier = Modifier.fillMaxSize())
             Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.fillMaxSize())
         }
         if (editing) {

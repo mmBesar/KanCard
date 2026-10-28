@@ -296,7 +296,7 @@ class BoardApi(
         method: String,
         params: JsonObject? = null,
         rejectFalse: Boolean = true,
-    ): JsonElement = withContext(Dispatchers.IO) {
+    ): JsonElement {
         val body = buildJsonObject {
             put("jsonrpc", "2.0")
             put("method", method)
@@ -304,6 +304,72 @@ class BoardApi(
             put("id", nextId.incrementAndGet())
         }.toString()
 
+        val root = parseJson(send(body)) as? JsonObject
+            ?: throw ApiException(ApiException.Kind.BAD_RESPONSE, "Not a Kanboard answer")
+        val error = root["error"]
+        if (error != null && error !is JsonNull) {
+            val message = (error as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull
+            throw ApiException(ApiException.Kind.SERVER, message ?: "Kanboard reported an error")
+        }
+        val result = root["result"]
+            ?: throw ApiException(ApiException.Kind.BAD_RESPONSE, "Answer has no result")
+        if (rejectFalse && isFalse(result)) {
+            throw ApiException(ApiException.Kind.REJECTED, "Kanboard rejected $method")
+        }
+        return result
+    }
+
+    /**
+     * The subtasks and comments of several tasks in ONE request (JSON-RPC batch: a list of calls
+     * answered by a list of results). A task with a missing or failed answer is left out of the result.
+     */
+    suspend fun getDetails(taskIds: List<Long>): Map<Long, Pair<List<SubtaskDto>, List<CommentDto>>> {
+        if (taskIds.isEmpty()) return emptyMap()
+        val calls = JsonArray(
+            taskIds.flatMapIndexed { index, taskId ->
+                listOf("getAllSubtasks", "getAllComments").mapIndexed { kind, method ->
+                    buildJsonObject {
+                        put("jsonrpc", "2.0")
+                        put("method", method)
+                        put("params", buildJsonObject { put("task_id", taskId) })
+                        put("id", index * 2 + kind + 1)
+                    }
+                }
+            },
+        )
+        val answers = parseJson(send(calls.toString())) as? JsonArray
+            ?: throw ApiException(ApiException.Kind.BAD_RESPONSE, "Not a Kanboard answer")
+        // Answers may come in any order: match them by id.
+        val byId = HashMap<Int, JsonElement>()
+        for (answer in answers) {
+            val obj = answer as? JsonObject ?: continue
+            val id = (obj["id"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: continue
+            val error = obj["error"]
+            val result = obj["result"]
+            if ((error == null || error is JsonNull) && result != null) byId[id] = result
+        }
+        // "false" means "nothing there" (an empty list); a missing answer or an error means "unknown",
+        // and such a task is left out so its cached copy is kept.
+        val result = LinkedHashMap<Long, Pair<List<SubtaskDto>, List<CommentDto>>>()
+        taskIds.forEachIndexed { index, taskId ->
+            val subtasks = byId[index * 2 + 1] ?: return@forEachIndexed
+            val comments = byId[index * 2 + 2] ?: return@forEachIndexed
+            result[taskId] = decodeList<SubtaskDto>(subtasks) to decodeList<CommentDto>(comments)
+        }
+        return result
+    }
+
+    private fun parseJson(text: String): JsonElement =
+        try {
+            json.parseToJsonElement(text)
+        } catch (e: SerializationException) {
+            throw ApiException(ApiException.Kind.BAD_RESPONSE, "Not a Kanboard answer", e)
+        } catch (e: IllegalArgumentException) {
+            throw ApiException(ApiException.Kind.BAD_RESPONSE, "Not a Kanboard answer", e)
+        }
+
+    /** Posts one request body (a single call or a batch) and returns the answer text. */
+    private suspend fun send(body: String): String = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(endpoint)
             .header("Authorization", Credentials.basic(username, token, Charsets.UTF_8))
@@ -317,28 +383,11 @@ class BoardApi(
                     403 -> throw ApiException(ApiException.Kind.FORBIDDEN, "This account may not do that")
                 }
                 if (!response.isSuccessful) {
-                    throw ApiException(ApiException.Kind.SERVER, "Server answered HTTP ${response.code}")
+                    // 5xx = the server (or a proxy in front of it) is down or restarting: try again later.
+                    val kind = if (response.code >= 500) ApiException.Kind.NETWORK else ApiException.Kind.SERVER
+                    throw ApiException(kind, "Server answered HTTP ${response.code}")
                 }
-                val text = response.body?.string().orEmpty()
-                val root = try {
-                    json.parseToJsonElement(text).jsonObject
-                } catch (e: SerializationException) {
-                    throw ApiException(ApiException.Kind.BAD_RESPONSE, "Not a Kanboard answer", e)
-                } catch (e: IllegalArgumentException) {
-                    throw ApiException(ApiException.Kind.BAD_RESPONSE, "Not a Kanboard answer", e)
-                }
-
-                val error = root["error"]
-                if (error != null && error !is JsonNull) {
-                    val message = (error as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull
-                    throw ApiException(ApiException.Kind.SERVER, message ?: "Kanboard reported an error")
-                }
-                val result = root["result"]
-                    ?: throw ApiException(ApiException.Kind.BAD_RESPONSE, "Answer has no result")
-                if (rejectFalse && isFalse(result)) {
-                    throw ApiException(ApiException.Kind.REJECTED, "Kanboard rejected $method")
-                }
-                result
+                response.body?.string().orEmpty()
             }
         } catch (e: ApiException) {
             throw e

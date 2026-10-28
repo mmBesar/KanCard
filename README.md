@@ -12,9 +12,9 @@ Made for home-lab servers: plain `http://` and self-signed HTTPS certificates ar
 - Works with `https://` (normal or **self-signed certificate**, pinned by fingerprint) and plain `http://` (after a warning)
 - Browse projects, swipe between columns, create / edit / move / close / reopen / delete tasks
 - Due dates, new projects, archive projects
-- Works fully offline: changes are saved on the phone and sent automatically when you are back online
+- Works fully offline: every change (tasks, subtasks, comments, new and archived projects) is saved on the phone and sent automatically when you are back online
 - Today screen across all projects; each project opens as a Board or a List (your choice, per project)
-- Subtasks and comments, task details as a sheet, quick-add per column
+- Subtasks and comments, task details as a sheet, quick-add per column, swipe to finish, drag tasks between columns in both views
 - Drag and drop tasks, task colours and priority, search
 - Appearance: all Catppuccin themes, system colours, AMOLED, custom accent
 - Home-screen widget per project

@@ -17,6 +17,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.Surface
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -186,4 +192,45 @@ fun QuickAddField(hint: String, onAdd: (String) -> Unit, modifier: Modifier = Mo
         keyboardActions = KeyboardActions(onDone = { submit() }),
         modifier = modifier.fillMaxWidth(),
     )
+}
+
+/**
+ * Swipe the content to the right to finish it. The row stays where it is until the list
+ * drops the finished task (offline too: the change is saved on the phone at once).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeToFinish(onDone: () -> Unit, content: @Composable () -> Unit) {
+    val state = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.StartToEnd) {
+                onDone()
+                true
+            } else {
+                false
+            }
+        },
+    )
+    SwipeToDismissBox(
+        state = state,
+        enableDismissFromEndToStart = false,
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .padding(start = 20.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    stringResource(R.string.action_done),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        },
+    ) {
+        // Opaque, so the colour behind only shows while swiping.
+        Surface(color = MaterialTheme.colorScheme.background) { content() }
+    }
 }
